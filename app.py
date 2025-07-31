@@ -1,6 +1,10 @@
 import json, os, random, re
 from flask import Flask, render_template, request, jsonify
+from gtts import gTTS
 from fuzzywuzzy import fuzz
+import mysql.connector
+from mysql.connector import Error
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -9,211 +13,200 @@ load_dotenv()
 app = Flask(__name__)
 app.static_folder = "static"
 
-# Hardcoded intents untuk testing (nanti bisa pindah ke database)
-INTENTS_DATA = {
-    "intents": [
-        {
-            "tag": "greeting",
-            "patterns": ["hai", "hello", "halo", "selamat pagi", "selamat siang", "hei", "hi"],
-            "responses": [
-                "Halo! Saya chatbot perpustakaan. Ada yang bisa saya bantu?",
-                "Hai! Silakan tanya tentang buku atau layanan perpustakaan.",
-                "Selamat datang di perpustakaan digital! Ada yang ingin dicari?"
-            ]
-        },
-        {
-            "tag": "book_search",
-            "patterns": ["cari buku", "buku", "ada buku", "dimana buku", "lokasi buku"],
-            "responses": [
-                "Silakan sebutkan judul atau subjek buku yang Anda cari!",
-                "Buku apa yang ingin Anda temukan? Saya akan membantu mencarinya.",
-                "Sebutkan judul buku atau topik yang Anda minati."
-            ]
-        },
-        {
-            "tag": "location",
-            "patterns": ["dimana", "lokasi", "rak", "lantai", "tempat"],
-            "responses": [
-                "Untuk mencari lokasi buku, sebutkan judul bukunya dulu ya!",
-                "Buku biasanya tersusun berdasarkan kategori. Judul buku apa yang dicari?"
-            ]
-        },
-        {
-            "tag": "hours",
-            "patterns": ["jam buka", "buka jam berapa", "tutup jam berapa", "jam operasional"],
-            "responses": [
-                "Perpustakaan buka Senin-Jumat pukul 08:00-16:00, Sabtu 08:00-12:00.",
-                "Jam operasional: Senin-Jumat 08:00-16:00, Sabtu 08:00-12:00, Minggu tutup."
-            ]
-        },
-        {
-            "tag": "help",
-            "patterns": ["help", "bantuan", "apa yang bisa", "fitur", "panduan"],
-            "responses": [
-                "Saya bisa membantu:\n• Mencari informasi buku\n• Memberikan lokasi rak\n• Info jam operasional\n• Layanan perpustakaan lainnya",
-                "Fitur yang tersedia:\n- Pencarian buku\n- Informasi lokasi\n- Jam operasional\n- Bantuan umum perpustakaan"
-            ]
-        },
-        {
-            "tag": "thanks",
-            "patterns": ["terima kasih", "thanks", "makasih", "thx"],
-            "responses": [
-                "Sama-sama! Senang bisa membantu.",
-                "Dengan senang hati! Ada lagi yang bisa dibantu?",
-                "Terima kasih kembali! Jangan sungkan bertanya lagi."
-            ]
-        },
-        {
-            "tag": "goodbye",
-            "patterns": ["bye", "selamat tinggal", "sampai jumpa", "dadah"],
-            "responses": [
-                "Sampai jumpa! Semoga hari Anda menyenangkan.",
-                "Selamat tinggal! Jangan lupa kembali ke perpustakaan.",
-                "Bye! Terima kasih telah menggunakan layanan kami."
-            ]
-        }
-    ]
-}
+# Fungsi koneksi database via MYSQL_PUBLIC_URL
+def connect_db():
+    db_url = os.getenv("MYSQL_PUBLIC_URL")
+    if not db_url:
+        print("❌ MYSQL_PUBLIC_URL tidak ditemukan.")
+        return None
 
-# Sample book data (nanti bisa pindah ke database)
-BOOKS_DATA = [
-    {"title": "Pemrograman Python", "subject": "komputer", "location": "A1", "availability": "tersedia"},
-    {"title": "Algoritma dan Struktur Data", "subject": "komputer", "location": "A1", "availability": "tersedia"},
-    {"title": "Basis Data MySQL", "subject": "komputer", "location": "A2", "availability": "sedang dipinjam"},
-    {"title": "Sejarah Indonesia", "subject": "sejarah", "location": "B1", "availability": "tersedia"},
-    {"title": "Matematika Dasar", "subject": "matematika", "location": "C1", "availability": "tersedia"},
-    {"title": "Fisika Modern", "subject": "fisika", "location": "C2", "availability": "tersedia"},
-    {"title": "Bahasa Inggris", "subject": "bahasa", "location": "D1", "availability": "tersedia"},
-    {"title": "Ekonomi Mikro", "subject": "ekonomi", "location": "E1", "availability": "sedang dipinjam"}
-]
+    parsed = urlparse(db_url)
+    host = parsed.hostname
+    port = parsed.port
+    user = parsed.username
+    password = parsed.password
+    database = parsed.path.lstrip("/")  # hapus '/' paling depan
+
+    print("🔍 DB Info:", host, port, user, database)
+
+    try:
+        return mysql.connector.connect(
+            host=host,
+            port=port,
+            user=user,
+            password=password,
+            database=database
+        )
+    except Error as e:
+        print("❌ Gagal koneksi DB:", e)
+        return None
+
+# Load intents dari database
+def load_intents_from_db():
+    conn = connect_db()
+    if conn is None:
+        print("❌ Tidak bisa koneksi ke DB.")
+        return {"intents": []}
+
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute("SELECT * FROM intents")
+        rows = cur.fetchall()
+        intents = {"intents": []}
+        for row in rows:
+            intents["intents"].append({
+                "tag": row["tag"],
+                "patterns": json.loads(row["patterns"]),
+                "responses": json.loads(row["responses"])
+            })
+        return intents
+    except Error as e:
+        print("❌ DB Error (load_intents_from_db):", e)
+        return {"intents": []}
+    finally:
+        if conn.is_connected():
+            cur.close()
+            conn.close()
+
+# Global variabel intent
+intents = {"intents": []}
 
 def clean_text(text):
-    """Clean text for better matching"""
     return re.sub(r"[^\w\s]", "", text.lower()).strip()
 
+def get_all_subject_keywords():
+    conn = connect_db()
+    if conn is None:
+        return []
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT DISTINCT subject FROM books")
+        results = cur.fetchall()
+        return [row[0].lower() for row in results if row[0]]
+    except Error as e:
+        print("❌ DB Error (get_all_subject_keywords):", e)
+        return []
+    finally:
+        cur.close()
+        conn.close()
+
 def search_books_by_title(user_input):
-    """Search books by title"""
-    user_input_clean = user_input.lower()
-    best_score = 0
-    matched_book = None
-    
-    for book in BOOKS_DATA:
-        score = fuzz.partial_ratio(user_input_clean, book['title'].lower())
-        if score > best_score and score >= 70:
-            best_score = score
-            matched_book = book
-    
-    if matched_book:
-        status = "tersedia" if matched_book['availability'] == 'tersedia' else "sedang dipinjam"
-        return f"Buku \"{matched_book['title']}\" saat ini {status} (rak {matched_book['location']})", best_score
-    
-    return None, 0
+    conn = connect_db()
+    if conn is None:
+        return None, 0, None
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute("SELECT title, availability, location FROM books")
+        books = cur.fetchall()
+
+        best_score = 0
+        matched_book = None
+
+        for book in books:
+            score = fuzz.partial_ratio(user_input.lower(), book['title'].lower())
+            if score > best_score and score >= 75:
+                best_score = score
+                matched_book = book
+
+        if matched_book:
+            status = "tersedia" if matched_book['availability'] == 'tersedia' else "sedang dipinjam"
+            return f"Buku \"{matched_book['title']}\" saat ini {status} (rak {matched_book['location']})", best_score, matched_book['title']
+
+        return None, 0, None
+    except Error as e:
+        print("❌ DB Error (search_books_by_title):", e)
+        return None, 0, None
+    finally:
+        cur.close()
+        conn.close()
 
 def search_books_by_subject(user_input):
-    """Search books by subject"""
-    user_input_clean = user_input.lower()
-    
-    # Get all unique subjects
-    subjects = list(set([book['subject'] for book in BOOKS_DATA]))
-    matched_subject = None
-    
-    for subject in subjects:
-        if subject in user_input_clean:
-            matched_subject = subject
-            break
-    
-    if matched_subject:
-        # Find books with this subject that are available
-        matching_books = [book for book in BOOKS_DATA 
-                         if book['subject'] == matched_subject and book['availability'] == 'tersedia']
-        
-        if matching_books:
-            location = matching_books[0]['location']
-            total = len(matching_books)
-            book_list = "\n".join([f"{i+1}. {book['title']}" for i, book in enumerate(matching_books)])
-            return f"Ada {total} buku tentang {matched_subject} di rak {location}:\n{book_list}"
+    subject_keywords = get_all_subject_keywords()
+    matched_subject = next((kw for kw in subject_keywords if kw in user_input.lower()), None)
+    if not matched_subject:
+        return None
+
+    conn = connect_db()
+    if conn is None:
+        return None
+    try:
+        cur = conn.cursor(dictionary=True)
+        query = """
+        SELECT title, location FROM books 
+        WHERE subject LIKE %s AND availability = 'tersedia'
+        """
+        cur.execute(query, ('%' + matched_subject + '%',))
+        results = cur.fetchall()
+
+        if results:
+            lokasi_rak = results[0]['location']
+            total = len(results)
+            daftar_judul = "\n".join([f"{i+1}. {row['title']}" for i, row in enumerate(results)])
+            return f"Ada {total} buku tentang {matched_subject} di rak {lokasi_rak}:\n{daftar_judul}"
         else:
             return f"Maaf, belum ada buku {matched_subject} yang tersedia saat ini."
-    
-    return None
+    except Error as e:
+        print("❌ DB Error (search_books_by_subject):", e)
+        return None
+    finally:
+        cur.close()
+        conn.close()
 
 def find_best_match(user_input):
-    """Find the best matching response"""
-    user_input_clean = clean_text(user_input)
-    
-    # First, try to search for books by subject
-    subject_response = search_books_by_subject(user_input)
-    if subject_response:
-        return subject_response, 100, "book_subject_search"
-    
-    # Then try to search by book title
-    title_response, title_score = search_books_by_title(user_input)
-    if title_response:
-        return title_response, title_score, "book_title_search"
-    
-    # Finally, match with intents
+    global intents
+    user_input = clean_text(user_input)
+
+    dynamic_book_response = search_books_by_subject(user_input)
+    if dynamic_book_response:
+        return dynamic_book_response, 100, "pencarian_subject"
+
+    book_title_response, book_score, book_pattern = search_books_by_title(user_input)
+    if book_title_response:
+        return book_title_response, book_score, book_pattern
+
     best_score = 0
-    best_response = "Maaf, saya tidak mengerti maksud Anda. Ketik 'help' untuk melihat apa yang bisa saya bantu."
+    best_response = "Maaf, saya tidak mengerti maksud Anda."
     best_pattern = ""
-    
-    for intent in INTENTS_DATA['intents']:
+
+    for intent in intents['intents']:
         for pattern in intent['patterns']:
             pattern_clean = clean_text(pattern)
-            score1 = fuzz.partial_ratio(user_input_clean, pattern_clean)
-            score2 = fuzz.token_sort_ratio(user_input_clean, pattern_clean)
+            score1 = fuzz.partial_ratio(user_input, pattern_clean)
+            score2 = fuzz.token_sort_ratio(user_input, pattern_clean)
             final_score = (score1 + score2) / 2
-            
+
             if final_score > best_score:
                 best_score = final_score
                 best_response = random.choice(intent['responses'])
                 best_pattern = pattern
-    
-    # Lower threshold for better user experience
-    if best_score < 50:
-        return "Maaf, saya tidak mengerti maksud Anda. Ketik 'help' untuk melihat apa yang bisa saya bantu.", best_score, ""
-    
+
+    if best_score < 80:
+        return "Maaf, saya tidak mengerti maksud Anda.", best_score, ""
+
     return best_response, best_score, best_pattern
 
 @app.route("/")
 def home():
-    """Home page"""
     return render_template("index.html")
 
 @app.route("/get")
 def get_bot_response():
-    """Get bot response"""
+    global intents
+    if not intents["intents"]:
+        intents = load_intents_from_db()
+
     user_txt = request.args.get("msg", "").strip()
-    
     if not user_txt:
-        return jsonify({
-            "response": "Mohon masukkan pesan Anda.",
-            "score": 0,
-            "pattern": ""
-        })
-    
+        return jsonify({"response": "Mohon masukkan pesan Anda.", "score": 0, "pattern": ""})
+
     response, score, pattern = find_best_match(user_txt)
-    
     return jsonify({
         "response": response,
         "score": score,
         "pattern": pattern
     })
 
-@app.route("/health")
-def health_check():
-    """Health check endpoint"""
-    return jsonify({
-        "status": "OK",
-        "message": "Chatbot Perpustakaan is running!",
-        "intents_count": len(INTENTS_DATA['intents']),
-        "books_count": len(BOOKS_DATA)
-    })
-
 if __name__ == "__main__":
-    print("🚀 Starting Chatbot Perpustakaan...")
-    print(f"📚 Loaded {len(INTENTS_DATA['intents'])} intents")
-    print(f"📖 Loaded {len(BOOKS_DATA)} books")
-    print("✅ Application ready!")
-    
     port = int(os.environ.get("PORT", 5000))
+    intents = load_intents_from_db()
     app.run(debug=False, host="0.0.0.0", port=port)
