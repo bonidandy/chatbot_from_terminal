@@ -4,12 +4,18 @@ from gtts import gTTS
 from fuzzywuzzy import fuzz
 import mysql.connector
 from mysql.connector import Error
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 app = Flask(__name__)
 app.static_folder = "static"
 
 # Fungsi koneksi database
 def connect_db():
+    print("🔍 HOST:", os.getenv("DB_HOST"))
+    print("🔍 PORT:", os.getenv("DB_PORT"))
     try:
         return mysql.connector.connect(
             host=os.getenv("DB_HOST"),
@@ -49,13 +55,14 @@ def load_intents_from_db():
             cur.close()
             conn.close()
 
-# Jangan langsung panggil ini di awal
+# Inisialisasi kosong, akan diisi saat startup
 intents = {"intents": []}
 
+# Bersihkan teks
 def clean_text(text):
     return re.sub(r"[^\w\s]", "", text.lower()).strip()
 
-# Subject keyword
+# Ambil semua subject keyword
 def get_all_subject_keywords():
     conn = connect_db()
     if conn is None:
@@ -72,7 +79,7 @@ def get_all_subject_keywords():
         cur.close()
         conn.close()
 
-# Judul buku
+# Pencarian berdasarkan judul
 def search_books_by_title(user_input):
     conn = connect_db()
     if conn is None:
@@ -103,7 +110,7 @@ def search_books_by_title(user_input):
         cur.close()
         conn.close()
 
-# Subject
+# Pencarian berdasarkan subject
 def search_books_by_subject(user_input):
     subject_keywords = get_all_subject_keywords()
     matched_subject = next((kw for kw in subject_keywords if kw in user_input.lower()), None)
@@ -136,7 +143,7 @@ def search_books_by_subject(user_input):
         cur.close()
         conn.close()
 
-# Deteksi input user
+# Proses pencocokan intent, judul, subject
 def find_best_match(user_input):
     global intents
     user_input = clean_text(user_input)
@@ -170,6 +177,7 @@ def find_best_match(user_input):
 
     return best_response, best_score, best_pattern
 
+# Routing utama
 @app.route("/")
 def home():
     return render_template("index.html")
@@ -191,7 +199,8 @@ def get_bot_response():
         "pattern": pattern
     })
 
+# Run Flask app
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    intents = load_intents_from_db()  # baru panggil saat startup
+    intents = load_intents_from_db()  # Load dari DB saat startup
     app.run(debug=False, host="0.0.0.0", port=port)
