@@ -4,3 +4,4 @@ fuzzywuzzy
 python-Levenshtein
 gTTS
 python-dotenv
+gunicorn==21.2.0
