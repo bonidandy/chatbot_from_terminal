@@ -1,1 +1,1 @@
-web: python app.py
+web: uwsgi --http 0.0.0.0:5000 --module app:app
