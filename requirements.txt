@@ -1,0 +1,6 @@
+Flask
+mysql-connector-python
+fuzzywuzzy
+python-Levenshtein
+gTTS
+python-dotenv
