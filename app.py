@@ -4,7 +4,6 @@ from gtts import gTTS
 from fuzzywuzzy import fuzz
 import mysql.connector
 from mysql.connector import Error
-from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -13,23 +12,24 @@ load_dotenv()
 app = Flask(__name__)
 app.static_folder = "static"
 
-# Fungsi koneksi database via MYSQL_PUBLIC_URL
+# Fungsi koneksi database menggunakan variabel terpisah
 def connect_db():
-    db_url = os.getenv("MYSQL_PUBLIC_URL")
-    if not db_url:
-        print("❌ MYSQL_PUBLIC_URL tidak ditemukan.")
+    # Mengambil variabel dari environment
+    host = os.getenv("DB_HOST")
+    port = os.getenv("DB_PORT")
+    user = os.getenv("DB_USER")
+    password = os.getenv("DB_PASSWORD")
+    database = os.getenv("DB_NAME")
+
+    # Memeriksa apakah semua variabel environment ada
+    if not host or not port or not user or not password or not database:
+        print("❌ Beberapa variabel lingkungan untuk DB tidak ditemukan.")
         return None
 
-    parsed = urlparse(db_url)
-    host = parsed.hostname
-    port = parsed.port
-    user = parsed.username
-    password = parsed.password
-    database = parsed.path.lstrip("/")  # hapus '/' paling depan
-
-    print("🔍 DB Info:", host, port, user, database)
+    print(f"🔍 Koneksi ke DB di {host}:{port} dengan user {user} ke database {database}")
 
     try:
+        # Koneksi ke database MySQL
         return mysql.connector.connect(
             host=host,
             port=port,
@@ -38,7 +38,7 @@ def connect_db():
             database=database
         )
     except Error as e:
-        print("❌ Gagal koneksi DB:", e)
+        print("❌ Gagal koneksi ke DB:", e)
         return None
 
 # Load intents dari database
