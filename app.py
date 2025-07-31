@@ -31,48 +31,86 @@ def connect_db():
     
     print(f"🔍 Connecting to - Host: {host}, Port: {port}, User: {user}, DB: {database}")
     
-    try:
-        conn = mysql.connector.connect(
-            host=host,
-            port=port,
-            user=user,
-            password=password,
-            database=database,
-            autocommit=True,
-            connect_timeout=30,
-            pool_reset_session=False,
-            sql_mode='',
-            use_unicode=True,
-            charset='utf8mb4'
-        )
-        print("✅ Database connection successful!")
-        return conn
-    except Error as e:
-        print(f"❌ Gagal koneksi DB: {e}")
-        # Coba alternatif dengan SSL disabled
+    # Coba beberapa konfigurasi koneksi
+    connection_configs = [
+        # Konfigurasi 1: Basic dengan SSL
+        {
+            "host": host,
+            "port": port,
+            "user": user,
+            "password": password,
+            "database": database,
+            "autocommit": True,
+            "connect_timeout": 10,
+            "use_unicode": True,
+            "charset": "utf8mb4"
+        },
+        # Konfigurasi 2: SSL disabled
+        {
+            "host": host,
+            "port": port,
+            "user": user,
+            "password": password,
+            "database": database,
+            "autocommit": True,
+            "connect_timeout": 10,
+            "ssl_disabled": True,
+            "use_unicode": True,
+            "charset": "utf8mb4"
+        },
+        # Konfigurasi 3: Minimal config
+        {
+            "host": host,
+            "port": port,
+            "user": user,
+            "password": password,
+            "database": database,
+            "connect_timeout": 5
+        }
+    ]
+    
+    for i, config in enumerate(connection_configs, 1):
         try:
-            conn = mysql.connector.connect(
-                host=host,
-                port=port,
-                user=user,
-                password=password,
-                database=database,
-                autocommit=True,
-                connect_timeout=30,
-                ssl_disabled=True
-            )
-            print("✅ Database connection successful (SSL disabled)!")
+            print(f"🔄 Mencoba konfigurasi {i}...")
+            conn = mysql.connector.connect(**config)
+            print(f"✅ Database connection successful dengan konfigurasi {i}!")
+            
+            # Test koneksi dengan query sederhana
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+            cursor.close()
+            print("✅ Database query test berhasil!")
+            
             return conn
-        except Error as e2:
-            print(f"❌ Gagal koneksi DB (alternatif): {e2}")
-            return None
+        except Error as e:
+            print(f"❌ Konfigurasi {i} gagal: {e}")
+            continue
+    
+    print("❌ Semua konfigurasi koneksi gagal!")
+    return None
 
 # Load intents dari database
 def load_intents_from_db():
+    print("🔄 Memuat intents dari database...")
     conn = connect_db()
     if conn is None:
-        print("❌ Tidak bisa koneksi ke DB.")
-        return {"intents": []}
+        print("❌ Tidak bisa koneksi ke DB untuk load intents.")
+        # Fallback ke intents kosong atau default
+        return {
+            "intents": [
+                {
+                    "tag": "greeting",
+                    "patterns": ["hai", "hello", "halo", "selamat pagi", "selamat siang"],
+                    "responses": ["Halo! Ada yang bisa saya bantu?", "Hai! Silakan tanya tentang buku perpustakaan."]
+                },
+                {
+                    "tag": "default",
+                    "patterns": [""],
+                    "responses": ["Maaf, sistem database sedang bermasalah. Silakan coba lagi nanti."]
+                }
+            ]
+        }
 
     try:
         cur = conn.cursor(dictionary=True)
@@ -85,12 +123,13 @@ def load_intents_from_db():
                 "patterns": json.loads(row["patterns"]),
                 "responses": json.loads(row["responses"])
             })
+        print(f"✅ Berhasil memuat {len(intents['intents'])} intents dari database")
         return intents
     except Error as e:
         print("❌ DB Error (load_intents_from_db):", e)
         return {"intents": []}
     finally:
-        if conn.is_connected():
+        if conn and conn.is_connected():
             cur.close()
             conn.close()
 
@@ -236,4 +275,17 @@ def get_bot_response():
 #     port = int(os.environ.get("PORT", 5000))
 #     intents = load_intents_from_db()
 #     app.run(debug=False, host="0.0.0.0", port=port)
+
+# Startup initialization
+print("🚀 Memulai aplikasi Chatbot Perpustakaan...")
+print("🔄 Testing database connection...")
+test_conn = connect_db()
+if test_conn:
+    print("✅ Database connection test berhasil!")
+    test_conn.close()
+else:
+    print("⚠️ Database connection test gagal, aplikasi akan tetap berjalan dengan fallback data!")
+
+print("🔄 Loading intents...")
 intents = load_intents_from_db()
+print(f"✅ Aplikasi siap dengan {len(intents.get('intents', []))} intents!")
