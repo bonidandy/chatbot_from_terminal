@@ -4,31 +4,44 @@ from gtts import gTTS
 from fuzzywuzzy import fuzz
 import mysql.connector
 from mysql.connector import Error
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
 app.static_folder = "static"
 
-# Fungsi koneksi database
+# Fungsi koneksi database via MYSQL_PUBLIC_URL
 def connect_db():
-    print("🔍 HOST:", os.getenv("DB_HOST"))
-    print("🔍 PORT:", os.getenv("DB_PORT"))
+    db_url = os.getenv("MYSQL_PUBLIC_URL")
+    if not db_url:
+        print("❌ MYSQL_PUBLIC_URL tidak ditemukan.")
+        return None
+
+    parsed = urlparse(db_url)
+    host = parsed.hostname
+    port = parsed.port
+    user = parsed.username
+    password = parsed.password
+    database = parsed.path.lstrip("/")  # hapus '/' paling depan
+
+    print("🔍 DB Info:", host, port, user, database)
+
     try:
         return mysql.connector.connect(
-            host=os.getenv("DB_HOST"),
-            port=int(os.getenv("DB_PORT")),
-            user=os.getenv("DB_USER"),
-            password=os.getenv("DB_PASSWORD"),
-            database=os.getenv("DB_NAME")
+            host=host,
+            port=port,
+            user=user,
+            password=password,
+            database=database
         )
     except Error as e:
         print("❌ Gagal koneksi DB:", e)
         return None
 
-# Load intents dari DB
+# Load intents dari database
 def load_intents_from_db():
     conn = connect_db()
     if conn is None:
@@ -55,14 +68,12 @@ def load_intents_from_db():
             cur.close()
             conn.close()
 
-# Inisialisasi kosong, akan diisi saat startup
+# Global variabel intent
 intents = {"intents": []}
 
-# Bersihkan teks
 def clean_text(text):
     return re.sub(r"[^\w\s]", "", text.lower()).strip()
 
-# Ambil semua subject keyword
 def get_all_subject_keywords():
     conn = connect_db()
     if conn is None:
@@ -79,7 +90,6 @@ def get_all_subject_keywords():
         cur.close()
         conn.close()
 
-# Pencarian berdasarkan judul
 def search_books_by_title(user_input):
     conn = connect_db()
     if conn is None:
@@ -110,7 +120,6 @@ def search_books_by_title(user_input):
         cur.close()
         conn.close()
 
-# Pencarian berdasarkan subject
 def search_books_by_subject(user_input):
     subject_keywords = get_all_subject_keywords()
     matched_subject = next((kw for kw in subject_keywords if kw in user_input.lower()), None)
@@ -143,7 +152,6 @@ def search_books_by_subject(user_input):
         cur.close()
         conn.close()
 
-# Proses pencocokan intent, judul, subject
 def find_best_match(user_input):
     global intents
     user_input = clean_text(user_input)
@@ -177,7 +185,6 @@ def find_best_match(user_input):
 
     return best_response, best_score, best_pattern
 
-# Routing utama
 @app.route("/")
 def home():
     return render_template("index.html")
@@ -199,8 +206,7 @@ def get_bot_response():
         "pattern": pattern
     })
 
-# Run Flask app
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    intents = load_intents_from_db()  # Load dari DB saat startup
+    intents = load_intents_from_db()
     app.run(debug=False, host="0.0.0.0", port=port)
