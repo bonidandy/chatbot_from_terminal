@@ -4,4 +4,4 @@ fuzzywuzzy
 python-Levenshtein
 gTTS
 python-dotenv
-gunicorn==
+gunicorn
