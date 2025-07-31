@@ -1,7 +1,7 @@
 Flask
 mysql-connector-python
 fuzzywuzzy
-python-Levenshtein
+python-Levenshtein==0.21.1
 gTTS
 python-dotenv
 gunicorn==21.2.0

@@ -13,33 +13,59 @@ load_dotenv()
 app = Flask(__name__)
 app.static_folder = "static"
 
-# Fungsi koneksi database via MYSQL_PUBLIC_URL
+# Fungsi koneksi database via MYSQL_PUBLIC_URL - Updated version
 def connect_db():
     db_url = os.getenv("MYSQL_PUBLIC_URL")
+    print(f"🔍 Raw DB_URL: {db_url}")
+    
     if not db_url:
         print("❌ MYSQL_PUBLIC_URL tidak ditemukan.")
         return None
-
+    
     parsed = urlparse(db_url)
     host = parsed.hostname
-    port = parsed.port
+    port = parsed.port or 3306  # Default MySQL port
     user = parsed.username
     password = parsed.password
-    database = parsed.path.lstrip("/")  # hapus '/' paling depan
-
-    print("🔍 DB Info:", host, port, user, database)
-
+    database = parsed.path.lstrip("/")
+    
+    print(f"🔍 Connecting to - Host: {host}, Port: {port}, User: {user}, DB: {database}")
+    
     try:
-        return mysql.connector.connect(
+        conn = mysql.connector.connect(
             host=host,
             port=port,
             user=user,
             password=password,
-            database=database
+            database=database,
+            autocommit=True,
+            connect_timeout=30,
+            pool_reset_session=False,
+            sql_mode='',
+            use_unicode=True,
+            charset='utf8mb4'
         )
+        print("✅ Database connection successful!")
+        return conn
     except Error as e:
-        print("❌ Gagal koneksi DB:", e)
-        return None
+        print(f"❌ Gagal koneksi DB: {e}")
+        # Coba alternatif dengan SSL disabled
+        try:
+            conn = mysql.connector.connect(
+                host=host,
+                port=port,
+                user=user,
+                password=password,
+                database=database,
+                autocommit=True,
+                connect_timeout=30,
+                ssl_disabled=True
+            )
+            print("✅ Database connection successful (SSL disabled)!")
+            return conn
+        except Error as e2:
+            print(f"❌ Gagal koneksi DB (alternatif): {e2}")
+            return None
 
 # Load intents dari database
 def load_intents_from_db():
@@ -206,7 +232,8 @@ def get_bot_response():
         "pattern": pattern
     })
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    intents = load_intents_from_db()
-    app.run(debug=False, host="0.0.0.0", port=port)
+# if __name__ == "__main__":
+#     port = int(os.environ.get("PORT", 5000))
+#     intents = load_intents_from_db()
+#     app.run(debug=False, host="0.0.0.0", port=port)
+intents = load_intents_from_db()
