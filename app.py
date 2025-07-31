@@ -8,34 +8,31 @@ from mysql.connector import Error
 app = Flask(__name__)
 app.static_folder = "static"
 
-# Fungsi koneksi database menggunakan environment variable
+# Fungsi koneksi database
 def connect_db():
-    host = os.getenv("DB_HOST")
-    port = int(os.getenv("DB_PORT"))
-    user = os.getenv("DB_USER")
-    password = os.getenv("DB_PASSWORD")
-    database = os.getenv("DB_NAME")
-
-    print("🔧 DB:", host, port, user, database)
-
-    return mysql.connector.connect(
-        host=host,
-        port=port,
-        user=user,
-        password=password,
-        database=database
-    )
-
-
-
-# Load intents dari database
-def load_intents_from_db():
     try:
-        conn = connect_db()
+        return mysql.connector.connect(
+            host=os.getenv("DB_HOST"),
+            port=int(os.getenv("DB_PORT")),
+            user=os.getenv("DB_USER"),
+            password=os.getenv("DB_PASSWORD"),
+            database=os.getenv("DB_NAME")
+        )
+    except Error as e:
+        print("❌ Gagal koneksi DB:", e)
+        return None
+
+# Load intents dari DB
+def load_intents_from_db():
+    conn = connect_db()
+    if conn is None:
+        print("❌ Tidak bisa koneksi ke DB.")
+        return {"intents": []}
+
+    try:
         cur = conn.cursor(dictionary=True)
         cur.execute("SELECT * FROM intents")
         rows = cur.fetchall()
-
         intents = {"intents": []}
         for row in rows:
             intents["intents"].append({
@@ -45,42 +42,45 @@ def load_intents_from_db():
             })
         return intents
     except Error as e:
-        print("Database error:", e)
+        print("❌ DB Error (load_intents_from_db):", e)
         return {"intents": []}
     finally:
         if conn.is_connected():
             cur.close()
             conn.close()
 
-intents = load_intents_from_db()
+# Jangan langsung panggil ini di awal
+intents = {"intents": []}
 
 def clean_text(text):
     return re.sub(r"[^\w\s]", "", text.lower()).strip()
 
-# Ambil semua keyword subject buku
+# Subject keyword
 def get_all_subject_keywords():
+    conn = connect_db()
+    if conn is None:
+        return []
     try:
-        conn = connect_db()
         cur = conn.cursor()
         cur.execute("SELECT DISTINCT subject FROM books")
         results = cur.fetchall()
+        return [row[0].lower() for row in results if row[0]]
+    except Error as e:
+        print("❌ DB Error (get_all_subject_keywords):", e)
+        return []
+    finally:
         cur.close()
         conn.close()
 
-        return [row[0].lower() for row in results if row[0]]
-    except Error as e:
-        print("DB Error (get_all_subject_keywords):", e)
-        return []
-
-# Pencarian berdasarkan judul buku
+# Judul buku
 def search_books_by_title(user_input):
+    conn = connect_db()
+    if conn is None:
+        return None, 0, None
     try:
-        conn = connect_db()
         cur = conn.cursor(dictionary=True)
         cur.execute("SELECT title, availability, location FROM books")
         books = cur.fetchall()
-        cur.close()
-        conn.close()
 
         best_score = 0
         matched_book = None
@@ -97,24 +97,23 @@ def search_books_by_title(user_input):
 
         return None, 0, None
     except Error as e:
-        print("DB Error (search_books_by_title):", e)
+        print("❌ DB Error (search_books_by_title):", e)
         return None, 0, None
+    finally:
+        cur.close()
+        conn.close()
 
-# Pencarian berdasarkan subject buku
+# Subject
 def search_books_by_subject(user_input):
     subject_keywords = get_all_subject_keywords()
-    matched_subject = None
-
-    for keyword in subject_keywords:
-        if keyword in user_input.lower():
-            matched_subject = keyword
-            break
-
+    matched_subject = next((kw for kw in subject_keywords if kw in user_input.lower()), None)
     if not matched_subject:
         return None
 
+    conn = connect_db()
+    if conn is None:
+        return None
     try:
-        conn = connect_db()
         cur = conn.cursor(dictionary=True)
         query = """
         SELECT title, location FROM books 
@@ -122,38 +121,34 @@ def search_books_by_subject(user_input):
         """
         cur.execute(query, ('%' + matched_subject + '%',))
         results = cur.fetchall()
-        cur.close()
-        conn.close()
 
         if results:
             lokasi_rak = results[0]['location']
             total = len(results)
             daftar_judul = "\n".join([f"{i+1}. {row['title']}" for i, row in enumerate(results)])
-            return (
-                f"Ada {total} buku tentang {matched_subject} di rak {lokasi_rak}:\n{daftar_judul}"
-            )
+            return f"Ada {total} buku tentang {matched_subject} di rak {lokasi_rak}:\n{daftar_judul}"
         else:
             return f"Maaf, belum ada buku {matched_subject} yang tersedia saat ini."
-
     except Error as e:
-        print("DB Error (books):", e)
+        print("❌ DB Error (search_books_by_subject):", e)
         return None
+    finally:
+        cur.close()
+        conn.close()
 
-# Pencocokan intent / subject / judul
+# Deteksi input user
 def find_best_match(user_input):
+    global intents
     user_input = clean_text(user_input)
 
-    # Berdasarkan subject
     dynamic_book_response = search_books_by_subject(user_input)
     if dynamic_book_response:
         return dynamic_book_response, 100, "pencarian_subject"
 
-    # Berdasarkan judul
     book_title_response, book_score, book_pattern = search_books_by_title(user_input)
     if book_title_response:
         return book_title_response, book_score, book_pattern
 
-    # Berdasarkan intent biasa
     best_score = 0
     best_response = "Maaf, saya tidak mengerti maksud Anda."
     best_pattern = ""
@@ -175,13 +170,16 @@ def find_best_match(user_input):
 
     return best_response, best_score, best_pattern
 
-# Routing
 @app.route("/")
 def home():
     return render_template("index.html")
 
 @app.route("/get")
 def get_bot_response():
+    global intents
+    if not intents["intents"]:
+        intents = load_intents_from_db()
+
     user_txt = request.args.get("msg", "").strip()
     if not user_txt:
         return jsonify({"response": "Mohon masukkan pesan Anda.", "score": 0, "pattern": ""})
@@ -193,7 +191,7 @@ def get_bot_response():
         "pattern": pattern
     })
 
-# Run server
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
+    intents = load_intents_from_db()  # baru panggil saat startup
     app.run(debug=False, host="0.0.0.0", port=port)
