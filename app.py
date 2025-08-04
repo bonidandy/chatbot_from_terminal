@@ -165,7 +165,7 @@ def find_best_match(user_input):
         return book_title_response, book_score, book_pattern
 
     best_score = 0
-    best_response = "Maaf, saya tidak mengerti maksud Anda."
+    best_response = "Maaf, saya tidak mengerti maksud Anda, silahkan pergi ke staf untuk pertanyaan lebih lanjut"
     best_pattern = ""
 
     for intent in intents['intents']:
@@ -181,7 +181,7 @@ def find_best_match(user_input):
                 best_pattern = pattern
 
     if best_score < 80:
-        return "Maaf, saya tidak mengerti maksud Anda.", best_score, ""
+        return "Maaf, saya tidak mengerti maksud Anda, silahkan pergi ke staf untuk pertanyaan lebih lanjut", best_score, ""
 
     return best_response, best_score, best_pattern
 
